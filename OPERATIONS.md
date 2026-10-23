@@ -83,3 +83,19 @@ DRAFTCAT_TG_CHAT_ID, DRAFTCAT_TG_ALLOWED_USERS, GHL_API_KEY (pending).
 GitHub key for itsablabla/draftcat-deploy and the GHL/Google credentials live
 in the Beeper perm chat; Jaden's Google password and the Hostim API token were
 posted in the channel on 2026-10-23 — recommend rotation.
+## 2026-10-23 19:02 UTC — e2e verification + fix (commit 5bb1bb1)
+- Instrumented TGBot.Send (patch 0001) to log `[telegram] sent chat=<id> msg_id=<id> chars=<n>`
+  on every send — pipeline notify delivery is now observable, it was a blind spot.
+- PROVEN end-to-end: /run email-digest 19:01:35 fetched 2 new unread → AI summary
+  (glm-5.3, 481 tokens, $0.0002) → notify → Telegram msg_id=35 → bridged into Beeper
+  operator room (digest text visible). Full loop green.
+- Earlier digests (18:26, 18:48) were sent by the engine but never appeared in the
+  bridge; both correlate with deploy/restart rollout windows. No error in engine logs.
+  Treat digests produced within ~1 min of a pod swap as possibly lost.
+- State.db writes flush at shutdown: a restart within moments of a digest can cause the
+  same unread mail to be digested again (observed 18:48). Idempotent content; upstream
+  improvement would be write-through dedup.
+- Tool gate verified: default-deny for unlisted tools (exec_shell → DENY), replay
+  rejected (401 "signature already used"), missing/bad signature → 401.
+- GHL still not provisioned (no valid key) — lead-triage / opportunity-recovery stay
+  commented out of config.yaml by design.
