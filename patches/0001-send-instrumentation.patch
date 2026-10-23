@@ -1,0 +1,27 @@
+diff --git a/main.go b/main.go
+index 03d7867..8d5695b 100644
+--- a/main.go
++++ b/main.go
+@@ -621,14 +621,20 @@ func (t *TGBot) apiCall(method string, payload map[string]interface{}) (json.Raw
+ }
+ 
+ func (t *TGBot) Send(text string) error {
+-	_, err := t.apiCall("sendMessage", map[string]interface{}{
++	raw, err := t.apiCall("sendMessage", map[string]interface{}{
+ 		"chat_id": t.chatID,
+ 		"text":    redact.String(text),
+ 	})
+ 	if err != nil {
+ 		log.Printf("[telegram] Send failed: %v", err)
++		return err
++	}
++	var msg struct {
++		MessageID int `json:"message_id"`
+ 	}
+-	return err
++	_ = json.Unmarshal(raw, &msg)
++	log.Printf("[telegram] sent chat=%d msg_id=%d chars=%d", t.chatID, msg.MessageID, len(text))
++	return nil
+ }
+ 
+ func (t *TGBot) sendTyping() {

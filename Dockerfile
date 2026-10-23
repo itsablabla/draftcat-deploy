@@ -6,6 +6,8 @@ FROM golang:1.25-alpine AS build
 WORKDIR /src
 RUN apk add --no-cache git ca-certificates
 RUN git clone --depth 1 --branch v0.13.0 https://github.com/renezander030/draftcat.git .
+COPY patches/ /patches/
+RUN git apply /patches/*.patch && echo "patches applied"
 COPY config.yaml /src/config.yaml
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/draftcat .
 
