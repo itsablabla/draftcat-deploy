@@ -1,8 +1,9 @@
 # draftcat configuration — Hostim build
-# Identical to upstream https://github.com/renezander030/draftcat config.yaml
-# EXCEPT the provider block (Manifest gateway instead of OpenRouter) and model
-# names (auto), so the image bakes the gateway routing. No secrets here:
-# DRAFTCAT_TG_TOKEN and MANIFEST_API_KEY come from the Hostim app env.
+# Based on upstream https://github.com/renezander030/draftcat config.yaml
+# Provider points at the Manifest gateway (app.manifest.build/v1, model auto).
+# webhook + tool_gate are ENABLED (0.0.0.0:8088) so the operator agent stack
+# (incl. KERNEL web MCP) can route tool calls through /gate/tool-call and the
+# public URL serves /healthz. Secrets stay in Hostim app env, never in this repo.
 telegram:
   token_env: DRAFTCAT_TG_TOKEN
   secrets_file: secrets.yaml      # chat_id + allowed_users (gitignored)
@@ -61,9 +62,44 @@ timeouts:
 observability:
   spans: false
 
-# webhook stays disabled — the app runs as a Telegram-polling worker, no HTTP
-# listener, matching the upstream default. Enable + add DRAFTCAT_WEBHOOK_SECRET
-# when inbound /hooks routes are wanted.
+# HTTP listener: /healthz, /readyz, /hooks/<pipeline> and /gate/tool-call.
+# 0.0.0.0 so the Hostim proxy can reach the container port.
+webhook:
+  enabled: true
+  addr: 0.0.0.0:8088
+  secret_env: DRAFTCAT_WEBHOOK_SECRET
+  max_body_bytes: 65536
+  require_signature: true
+
+# Tool-call gate for the agent harness (the same stack that uses KERNEL web
+# MCP). Default deny: only tools listed here can be called. Listed without
+# approval = allowed + audited. Side-effecting tools require operator approval.
+tool_gate:
+  enabled: true
+  repeat_window: 10m
+  max_repeats: 3
+  notify_denials: true
+  tools:
+    # Read-only web surface used by the agent stack (web search/fetch + KERNEL
+    # browser/webmcp calls) — allowed, audited.
+    - name: web_search
+    - name: web_fetch
+    - name: browser_curl
+    - name: browser_repl
+    - name: webmcp
+    # Side effects — every call goes to the operator channel for approval.
+    - name: send_email
+      risk: high
+      require_approval: true
+    - name: send_message
+      risk: high
+      require_approval: true
+    - name: post_to_channel
+      risk: high
+      require_approval: true
+    - name: refund
+      risk: high
+      require_approval: true
 
 pipelines:
   - name: test-screener
