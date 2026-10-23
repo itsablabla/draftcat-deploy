@@ -13,6 +13,7 @@ FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata
 COPY --from=build /out/draftcat /usr/local/bin/draftcat
 COPY config.yaml /work/config.yaml
+COPY --from=build /src/skills /work/skills
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod 755 /entrypoint.sh
 WORKDIR /work
