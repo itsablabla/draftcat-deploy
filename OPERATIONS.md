@@ -16,9 +16,10 @@ Hostim CLI: `hostim` (token via HOSTIM_TOKEN env; projects use `hostim use draft
 
 ## Current state (2026-10-23 ~17:55 UTC)
 
-Deployed commit 2db6d8f: only `test-screener` pipeline defined. `email-digest`,
-`lead-triage`, `opportunity-recovery` are commented out in config.yaml because
-their connectors are missing. Rebuild = no more 30m/1h error spam.
+Deployed commit 7578368: `test-screener` + `email-digest` active. Gmail connector
+is LIVE and verified (token in env GMAIL_TOKEN_JSON, injected at boot; live run
+18:26 UTC fetched 10 unread, summarized via Manifest, notify completed).
+`lead-triage` + `opportunity-recovery` remain commented out — GHL key pending.
 
 ## What each connector needs (in order)
 
