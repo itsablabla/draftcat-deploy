@@ -1,0 +1,136 @@
+# draftcat configuration — Hostim build
+# Identical to upstream https://github.com/renezander030/draftcat config.yaml
+# EXCEPT the provider block (Manifest gateway instead of OpenRouter) and model
+# names (auto), so the image bakes the gateway routing. No secrets here:
+# DRAFTCAT_TG_TOKEN and MANIFEST_API_KEY come from the Hostim app env.
+telegram:
+  token_env: DRAFTCAT_TG_TOKEN
+  secrets_file: secrets.yaml      # chat_id + allowed_users (gitignored)
+  # REQUIRED — engine refuses to start without this
+  security:
+    max_input_length: 500         # max chars per operator message
+    rate_limit: 10                # max messages per minute per user
+    strip_markdown: true          # strip formatting that could break prompt boundaries
+
+gmail:
+  token_path: ~/.config/google-gmail-token.json
+  permission: send          # read + send (with HITL approval)
+
+gohighlevel:
+  # Option A: Private integration token (single location)
+  api_key_env: GHL_API_KEY
+  location_id: your-location-id
+  # Option B: OAuth (marketplace apps) — uncomment below
+  # client_id: your-client-id
+  # client_secret: your-client-secret
+  # token_path: ~/.config/ghl-token.json
+  permission: write         # read | write (write = send messages with HITL approval)
+
+provider:
+  type: openai
+  api_key_env: MANIFEST_API_KEY
+  base_url: https://app.manifest.build/v1
+  usage_accounting: false
+
+models:
+  haiku:
+    model: auto
+    max_tokens: 4096
+    cost_per_1k_input: 0.0001
+    cost_per_1k_output: 0.0005
+  gpt-4o-mini:
+    model: auto
+    max_tokens: 1024
+    cost_per_1k_input: 0.00015
+    cost_per_1k_output: 0.0006
+
+roles:
+  classifier: gpt-4o-mini
+  drafter: gpt-4o-mini
+
+budgets:
+  per_step_tokens: 2048
+  per_pipeline_tokens: 10000
+  per_day_tokens: 100000
+
+timeouts:
+  ai_call: 30s
+  operator_approval: 4h
+  pipeline_total: 5m
+
+observability:
+  spans: false
+
+# webhook stays disabled — the app runs as a Telegram-polling worker, no HTTP
+# listener, matching the upstream default. Enable + add DRAFTCAT_WEBHOOK_SECRET
+# when inbound /hooks routes are wanted.
+
+pipelines:
+  - name: test-screener
+    schedule: manual
+    steps:
+      - name: mock-input
+        type: deterministic
+
+      - name: classify
+        type: ai
+        skill: classify-job
+        vars:
+          profile: "AI/LLM, TypeScript, Go, cloud infra. $60/hr min."
+
+      - name: review
+        type: approval
+        mode: hitl
+        channel: telegram
+
+      - name: log-result
+        type: deterministic
+
+  - name: email-digest
+    schedule: 30m
+    steps:
+      - name: fetch-unread
+        type: deterministic
+        action: gmail_unread
+
+      - name: summarize
+        type: ai
+        skill: email-digest
+
+      - name: report
+        type: deterministic
+        action: notify
+
+  - name: lead-triage
+    schedule: 1h
+    steps:
+      - name: fetch-contacts
+        type: deterministic
+        action: ghl_new_contacts
+
+      - name: classify
+        type: ai
+        skill: triage-lead
+
+      - name: review
+        type: approval
+        mode: hitl
+        channel: telegram
+
+  - name: opportunity-recovery
+    schedule: 24h
+    steps:
+      - name: fetch-stale
+        type: deterministic
+        action: ghl_stale_opportunities
+        vars:
+          pipeline_id: your-pipeline-id
+
+      - name: draft-followup
+        type: ai
+        skill: draft-ghl-followup
+
+      - name: approve-send
+        type: approval
+        mode: hitl
+        channel: telegram
