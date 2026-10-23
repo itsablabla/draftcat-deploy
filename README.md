@@ -3,15 +3,17 @@
 Hostim deployment wrapper for [renezander030/draftcat](https://github.com/renezander030/draftcat).
 
 The upstream image bakes its default `config.yaml` (OpenRouter provider) in at
-`/work/config.yaml`. This repo ships a replacement `config.yaml` that points
-Draftcat at the **Manifest** LLM gateway:
+`/work/config.yaml`. This repo ships a replacement `config.yaml` that:
 
-- `provider.base_url: https://app.manifest.build/v1`
-- `provider.api_key_env: MANIFEST_API_KEY` (credential stays in Hostim env)
-- `models.*.model: auto` (Manifest router picks the real model)
-- `usage_accounting: false` (non-OpenRouter endpoint)
-
-Everything else is byte-identical to upstream `config.yaml` at v0.13.0.
+- points the provider at the **Manifest** LLM gateway
+  (`base_url: https://app.manifest.build/v1`, `api_key_env: MANIFEST_API_KEY`,
+  model `auto`, `usage_accounting: false`);
+- **enables the webhook listener** (0.0.0.0:8088): `/healthz`, `/readyz`,
+  `/hooks/<pipeline>`, and the tool-call gate `/gate/tool-call`;
+- **enables the tool gate** with an allowlist for the operator agent stack
+  (web search/fetch + KERNEL browser/webmcp calls allowed + audited;
+  `send_email`, `send_message`, `post_to_channel`, `refund` require
+  operator approval). Default deny for anything unlisted.
 
 ## Build
 
@@ -24,4 +26,9 @@ COPY config.yaml /work/config.yaml
 
 - `DRAFTCAT_TG_TOKEN` — Telegram bot token
 - `MANIFEST_API_KEY` — Manifest agent key
+- `DRAFTCAT_WEBHOOK_SECRET` — bearer token for `/hooks/*` and `/gate/tool-call`
+  (required while `webhook.enabled`; HMAC signature `t=<unix>,v1=...` also
+  required, see upstream docs/tool-gate.md)
 - `DRAFTCAT_STATE_PATH=/data/state.db` — persisted SQLite state (mounted volume)
+- `DRAFTCAT_TG_ALLOWED_USERS` / `DRAFTCAT_TG_CHAT_ID` — operator Telegram user
+  ID(s); without them the bot starts but no operator is bound
