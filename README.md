@@ -32,3 +32,4 @@ COPY config.yaml /work/config.yaml
 - `DRAFTCAT_STATE_PATH=/data/state.db` — persisted SQLite state (mounted volume)
 - `DRAFTCAT_TG_ALLOWED_USERS` / `DRAFTCAT_TG_CHAT_ID` — operator Telegram user
   ID(s); without them the bot starts but no operator is bound
+- `GMAIL_TOKEN_JSON` — base64 Gmail OAuth token JSON (decoded to /root/.config/google-gmail-token.json by the entrypoint)
