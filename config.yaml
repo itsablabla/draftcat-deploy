@@ -14,7 +14,7 @@ telegram:
     strip_markdown: true          # strip formatting that could break prompt boundaries
 
 gmail:
-  token_path: ~/.config/google-gmail-token.json
+  token_path: /root/.config/google-gmail-token.json
   permission: send          # read + send (with HITL approval)
 
 gohighlevel:
@@ -122,51 +122,57 @@ pipelines:
       - name: log-result
         type: deterministic
 
-  - name: email-digest
-    schedule: 30m
-    steps:
-      - name: fetch-unread
-        type: deterministic
-        action: gmail_unread
+# [email-digest] paused: connector missing (gmail token / GHL)
+#   - name: email-digest
+#     schedule: 30m
+#     steps:
+#       - name: fetch-unread
+#         type: deterministic
+#         action: gmail_unread
+# 
+#       - name: summarize
+#         type: ai
+#         skill: email-digest
+# 
+#       - name: report
+#         type: deterministic
+#         action: notify
+# 
 
-      - name: summarize
-        type: ai
-        skill: email-digest
+# [lead-triage] paused: connector missing (gmail token / GHL)
+#   - name: lead-triage
+#     schedule: 1h
+#     steps:
+#       - name: fetch-contacts
+#         type: deterministic
+#         action: ghl_new_contacts
+# 
+#       - name: classify
+#         type: ai
+#         skill: triage-lead
+# 
+#       - name: review
+#         type: approval
+#         mode: hitl
+#         channel: telegram
+# 
 
-      - name: report
-        type: deterministic
-        action: notify
+# [opportunity-recovery] paused: connector missing (gmail token / GHL)
+#   - name: opportunity-recovery
+#     schedule: 24h
+#     steps:
+#       - name: fetch-stale
+#         type: deterministic
+#         action: ghl_stale_opportunities
+#         vars:
+#           pipeline_id: your-pipeline-id
+# 
+#       - name: draft-followup
+#         type: ai
+#         skill: draft-ghl-followup
+# 
+#       - name: approve-send
+#         type: approval
+#         mode: hitl
+#         channel: telegram
 
-  - name: lead-triage
-    schedule: 1h
-    steps:
-      - name: fetch-contacts
-        type: deterministic
-        action: ghl_new_contacts
-
-      - name: classify
-        type: ai
-        skill: triage-lead
-
-      - name: review
-        type: approval
-        mode: hitl
-        channel: telegram
-
-  - name: opportunity-recovery
-    schedule: 24h
-    steps:
-      - name: fetch-stale
-        type: deterministic
-        action: ghl_stale_opportunities
-        vars:
-          pipeline_id: your-pipeline-id
-
-      - name: draft-followup
-        type: ai
-        skill: draft-ghl-followup
-
-      - name: approve-send
-        type: approval
-        mode: hitl
-        channel: telegram
