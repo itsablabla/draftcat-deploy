@@ -123,21 +123,21 @@ pipelines:
         type: deterministic
 
 # [email-digest] paused: connector missing (gmail token / GHL)
-#   - name: email-digest
-#     schedule: 30m
-#     steps:
-#       - name: fetch-unread
-#         type: deterministic
-#         action: gmail_unread
-# 
-#       - name: summarize
-#         type: ai
-#         skill: email-digest
-# 
-#       - name: report
-#         type: deterministic
-#         action: notify
-# 
+  - name: email-digest
+    schedule: 30m
+    steps:
+      - name: fetch-unread
+        type: deterministic
+        action: gmail_unread
+
+      - name: summarize
+        type: ai
+        skill: email-digest
+
+      - name: report
+        type: deterministic
+        action: notify
+
 
 # [lead-triage] paused: connector missing (gmail token / GHL)
 #   - name: lead-triage
