@@ -99,3 +99,32 @@ posted in the channel on 2026-10-23 — recommend rotation.
   rejected (401 "signature already used"), missing/bad signature → 401.
 - GHL still not provisioned (no valid key) — lead-triage / opportunity-recovery stay
   commented out of config.yaml by design.
+
+## 2026-10-25 — patch 0002: LLM timeout no longer drops email digests
+
+Incident: 13:27 UTC (07:27 MDT) email-digest fetched 2 unread emails, summarize
+call to app.manifest.build exceeded `timeouts.ai_call` (30s) → run failed.
+Three upstream (v0.13.0) behaviours turned one slow call into lost mail:
+1. No retry on our own deadline (provider retries cover 429 only).
+2. `DedupByID` marks fetched ids processed *at fetch time*, so later cycles
+   logged "all unread emails already processed" and never retried them.
+3. The abandoned call stays `pending` in `budget_calls`; upstream then refuses
+   EVERY later LLM call ("BUDGET_BLOCKED: unresolved provider usage") until a
+   manual `draftcat budget reconcile`.
+
+Fix (patches/0002-ai-timeout-retry-and-no-drop.patch + config):
+- `timeouts.ai_call: 60s` (observed summarize latency 27.7–29.9s).
+- ai steps retry once on ai_call deadline (fresh deadline, inside
+  pipeline_total=5m). Env `DRAFTCAT_AI_TIMEOUT_RETRIES` (0–5, default 1).
+- Gmail ids are marked processed only after the whole run succeeds; a failed
+  run leaves them for the next 30m cycle.
+- A call abandoned at our deadline is settled at a worst-case estimate
+  (prompt/2 tokens + full max_tokens at configured rates) instead of wedging
+  the ledger. Log line: `[budget] call ... timed out; settled at worst-case estimate`.
+- Tests: tests/hostim_timeout_patch_test.go (copy into the patched source tree,
+  `go test -run TestHostim .`) — fail on v0.13.0, pass
+  patched; full upstream suite green.
+
+Dev Spec v2.1 waiver (§7): hotfix path — no CI on this repo and no second
+reviewer before deploy; verified locally (build + tests + `draftcat validate`)
+and against production logs. Follow-up: reviewer signoff within 24h (Jaden).

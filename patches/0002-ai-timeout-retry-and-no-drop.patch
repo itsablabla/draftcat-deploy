@@ -1,0 +1,175 @@
+diff --git a/hostim_timeout_patch.go b/hostim_timeout_patch.go
+new file mode 100644
+index 0000000..6457b1a
+--- /dev/null
++++ b/hostim_timeout_patch.go
+@@ -0,0 +1,60 @@
++package main
++
++// [hostim patch 0002] helpers for LLM-timeout resilience in the Hostim build.
++
++import (
++	"log"
++	"os"
++	"strconv"
++
++	"github.com/renezander030/draftcat/internal/config"
++	gmailapi "github.com/renezander030/draftcat/internal/gmail"
++	statestore "github.com/renezander030/draftcat/internal/state"
++)
++
++// aiTimeoutRetries is how many extra attempts an ai step gets after a call
++// exceeds timeouts.ai_call. DRAFTCAT_AI_TIMEOUT_RETRIES overrides (0 disables).
++func aiTimeoutRetries() int {
++	if v := os.Getenv("DRAFTCAT_AI_TIMEOUT_RETRIES"); v != "" {
++		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 5 {
++			return n
++		}
++	}
++	return 1
++}
++
++// timeoutUsageEstimate is the worst-case charge for a call abandoned at the
++// deadline: prompt at ~2 chars/token (over-estimate) plus the full max_tokens.
++func timeoutUsageEstimate(prompt string, maxTokens int, m config.ModelConfig) *CompletionResponse {
++	in := len(prompt)/2 + 1
++	cost := float64(in)/1000*m.CostIn + float64(maxTokens)/1000*m.CostOut
++	return &CompletionResponse{Model: m.Model, InputTokens: in, OutputTokens: maxTokens, CostUSD: cost, CostSource: "timeout-estimate"}
++}
++
++// filterUnseenEmails drops already-processed mail WITHOUT marking the rest
++// seen; it returns the new ids so the caller can mark them after success.
++func filterUnseenEmails(s *statestore.StateStore, pipeline string, emails []gmailapi.Email) ([]gmailapi.Email, []string) {
++	if s == nil || len(emails) == 0 {
++		return emails, nil
++	}
++	ids := make([]string, len(emails))
++	for i, e := range emails {
++		ids[i] = e.ID
++	}
++	unseen, err := s.FilterUnseen(pipeline, "gmail", ids)
++	if err != nil {
++		log.Printf("[state] FilterUnseen(%s/gmail) failed (proceeding without dedup): %v", pipeline, err)
++		return emails, ids
++	}
++	set := make(map[string]struct{}, len(unseen))
++	for _, id := range unseen {
++		set[id] = struct{}{}
++	}
++	out := make([]gmailapi.Email, 0, len(unseen))
++	for _, e := range emails {
++		if _, ok := set[e.ID]; ok {
++			out = append(out, e)
++		}
++	}
++	return out, unseen
++}
+diff --git a/main.go b/main.go
+index 8d5695b..00398b2 100644
+--- a/main.go
++++ b/main.go
+@@ -1061,6 +1061,23 @@ func runPipeline(cfg *config.Config, pipeline config.PipelineConfig, budget *Bud
+ 		pipeSpan.End(status, fields)
+ 	}()
+ 
++	// Gmail ids fetched this run; recorded as processed only on success.
++	var pendingGmailSeen []string
++	defer func() {
++		if len(pendingGmailSeen) == 0 || state == nil {
++			return
++		}
++		if err != nil {
++			log.Printf("[pipeline:%s] run failed; %d email(s) NOT marked processed, will retry next cycle", pipeline.Name, len(pendingGmailSeen))
++			return
++		}
++		if mErr := state.MarkSeen(pipeline.Name, "gmail", pendingGmailSeen); mErr != nil {
++			log.Printf("[state] MarkSeen(%s/gmail) failed: %v", pipeline.Name, mErr)
++			return
++		}
++		log.Printf("[pipeline:%s] marked %d email(s) processed", pipeline.Name, len(pendingGmailSeen))
++	}()
++
+ 	// Parse pipeline timeout
+ 	pipelineTimeout, _ := time.ParseDuration(cfg.Timeouts.PipelineTotal)
+ 	if pipelineTimeout == 0 {
+@@ -1134,8 +1151,11 @@ Description: We need an experienced LLM engineer to build a retrieval-augmented
+ 					log.Printf("[pipeline:%s][step:%s] no unread emails, skipping pipeline", pipeline.Name, step.Name)
+ 					return nil // nothing to report
+ 				}
+-				emails = statestore.DedupByID(state, pipeline.Name, "gmail", emails,
+-					func(e gmailapi.Email) string { return e.ID })
++				// Filter already-digested mail but do NOT mark the new ids seen
++				// yet: they are marked only when the run finishes without error
++				// (see the pendingGmailSeen defer). A failed summarize/report
++				// leaves them eligible for the next cycle. [hostim patch 0002]
++				emails, pendingGmailSeen = filterUnseenEmails(state, pipeline.Name, emails)
+ 				if len(emails) == 0 {
+ 					log.Printf("[pipeline:%s][step:%s] all unread emails already processed, skipping pipeline", pipeline.Name, step.Name)
+ 					return nil
+@@ -1348,15 +1368,27 @@ Description: We need an experienced LLM engineer to build a retrieval-augmented
+ 				prompt = strings.ReplaceAll(prompt, "{{"+k+"}}", fmt.Sprintf("%v", v))
+ 			}
+ 
+-			// AI call with timeout
++			// AI call with timeout. A call that hits the per-call deadline is
++			// retried (fresh deadline) up to aiTimeoutRetries() times, as long as
++			// the pipeline itself still has time left. Model latency spikes then
++			// cost one extra call instead of a dropped run. [hostim patch 0002]
+ 			aiTimeout, _ := time.ParseDuration(cfg.Timeouts.AICall)
+ 			if aiTimeout == 0 {
+ 				aiTimeout = 30 * time.Second
+ 			}
+-			aiCtx, aiCancel := context.WithTimeout(ctx, aiTimeout)
+-
+-			resp, err := callLLM(aiCtx, cfg, role, prompt, budget)
+-			aiCancel()
++			var resp *CompletionResponse
++			var err error
++			maxAITries := aiTimeoutRetries() + 1
++			for try := 1; ; try++ {
++				aiCtx, aiCancel := context.WithTimeout(ctx, aiTimeout)
++				resp, err = callLLM(aiCtx, cfg, role, prompt, budget)
++				aiCancel()
++				if err == nil || try >= maxAITries || ctx.Err() != nil || !errors.Is(err, context.DeadlineExceeded) {
++					break
++				}
++				log.Printf("[pipeline:%s][step:%s] LLM call exceeded ai_call timeout %s (try %d/%d), retrying",
++					pipeline.Name, step.Name, aiTimeout, try, maxAITries)
++			}
+ 			if err != nil {
+ 				return fmt.Errorf("[step:%s] LLM call failed: %w", step.Name, err)
+ 			}
+diff --git a/provider_call.go b/provider_call.go
+index 6db66cb..26d644f 100644
+--- a/provider_call.go
++++ b/provider_call.go
+@@ -7,6 +7,7 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"io"
++	"log"
+ 
+ 	"github.com/renezander030/draftcat/internal/config"
+ )
+@@ -102,6 +103,21 @@ func callLLM(ctx context.Context, cfg *config.Config, role, prompt string, track
+ 				return nil, err
+ 			}
+ 			result, providerErr := providerCallLLM(ctx, cfg, role, prompt, maxTokens)
++			if providerErr != nil && uncertainProviderError(providerErr) && errors.Is(providerErr, context.DeadlineExceeded) {
++				// [hostim patch 0002] A call abandoned at our own deadline may
++				// still have been billed. Upstream leaves it 'pending', which
++				// blocks EVERY later LLM call until a manual `budget reconcile`.
++				// Instead settle it at a worst-case estimate (full prompt + full
++				// max_tokens at configured rates): the ledger over-counts rather
++				// than under-counts, and the engine keeps running.
++				est := timeoutUsageEstimate(prompt, maxTokens, model)
++				if err := b.finish(id, pipelineFromContext(ctx), est, nil, cfg); err != nil {
++					return nil, err
++				}
++				log.Printf("[budget] call %s timed out; settled at worst-case estimate (%d tokens, $%.6f)",
++					id, est.InputTokens+est.OutputTokens, est.CostUSD)
++				return nil, providerErr
++			}
+ 			if err := b.finish(id, pipelineFromContext(ctx), result, providerErr, cfg); err != nil {
+ 				return nil, err
+ 			}

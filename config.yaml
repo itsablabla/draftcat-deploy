@@ -55,7 +55,7 @@ budgets:
   per_day_tokens: 100000
 
 timeouts:
-  ai_call: 30s
+  ai_call: 60s                  # was 30s; summarize latency hit 27.7–29.9s (2026-10-24/25) [patch 0002 also retries once on timeout]
   operator_approval: 4h
   pipeline_total: 5m
 
